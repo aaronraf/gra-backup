@@ -4,7 +4,7 @@
 
 # Entry point for the program
 C_SRCS = main.c
-CPP_SRCS = simulation.cpp cache_module.cpp direct_mapped_cache.cpp four_way_lru_cache.cpp main_memory.cpp
+CPP_SRCS = simulation.cpp cache_base.cpp cache_module.cpp direct_mapped_cache.cpp four_way_lru_cache.cpp main_memory.cpp
 
 # Object files located in the output directory outside src
 C_OBJS = $(patsubst %.c,../out/%.o,$(C_SRCS))
@@ -20,7 +20,7 @@ TARGET := ../out/simulation
 SCPATH = ../../systemc
 
 # Additional flags for the compiler
-CXXFLAGS := -std=c++14 -I$(SCPATH)/include -I$(HEADERS_DIR) -L$(SCPATH)/lib -lsystemc -lm -Wall -Wextra
+CXXFLAGS := -std=c++14 -I$(SCPATH)/include -I$(HEADERS_DIR) -L$(SCPATH)/lib -lsystemc -lm -Wall
 
 # ---------------------------------------
 # CONFIGURATION END
@@ -78,5 +78,6 @@ $(TARGET): $(C_OBJS) $(CPP_OBJS)
 clean:
 	rm -f $(TARGET)
 	rm -rf ../out/*.o
+	rm -rf ../out/*.vcd
 
 .PHONY: all debug release clean

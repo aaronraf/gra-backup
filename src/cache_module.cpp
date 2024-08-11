@@ -1,6 +1,6 @@
 #include "../includes/cache_module.hpp"
 
-MainMemory* main_memory = new MainMemory();
+MainMemory* mainMemory = new MainMemory(CACHE_ADDRESS_LENGTH);
 
 CACHE_MODULE::CACHE_MODULE(sc_module_name name, int cycles, int directMapped, unsigned cacheLines, unsigned cacheLineSize,
                 unsigned cacheLatency, unsigned memoryLatency, int numRequests) : sc_module(name) {
@@ -13,91 +13,123 @@ CACHE_MODULE::CACHE_MODULE(sc_module_name name, int cycles, int directMapped, un
     this->memoryLatency = memoryLatency;
     this->numRequests = numRequests; 
 
-    result_temp.misses = 0;
-    result_temp.hits = 0;
-    result_temp.cycles = 0;  
-    result_temp.primitiveGateCount = 0;
+    waitForCacheLatency.write(0);
+    waitForMemoryLatency.write(0);
+    requestsExceedCycles.write(0);
+
+    resultTemp.cycles = 0;  
+    resultTemp.hits = 0;
+    resultTemp.misses = 0;
+    resultTemp.primitiveGateCount = 0;
 
     // Determine number of index, offset, tag
-    cache_config.number_of_index_bits = ceil(log2((directMapped == 1) ? cacheLines : cacheLines / 4));
-    cache_config.number_of_offset_bits = ceil(log2(cacheLineSize));
-    cache_config.number_of_tag_bits = CACHE_ADDRESS_LENGTH - cache_config.number_of_index_bits - cache_config.number_of_offset_bits;
+    cacheConfig.numberOfIndexBits = ceil(log2((directMapped == 1) ? cacheLines : cacheLines / 4));
+    cacheConfig.numberOfOffsetBits = ceil(log2(cacheLineSize));
+    cacheConfig.numberOfTagBits = CACHE_ADDRESS_LENGTH - cacheConfig.numberOfIndexBits - cacheConfig.numberOfOffsetBits;
 
+    // Polymorphic implementation of cache
     if (directMapped == 0) {
-        cache = new FourWayLRUCache(cache_config);
+        cache = new FourWayLRUCache(cacheConfig);
     } else {
-        cache = new DirectMappedCache(cacheLines, cache_config);
+        cache = new DirectMappedCache(cacheLines, cacheConfig);
+    }
+
+    // primitiveGateCount
+    uint32_t oneBitStorageGates = 4;
+    uint32_t allBitsCacheStorageGates = (8 * oneBitStorageGates) * (cacheLines * cacheLineSize);
+    uint32_t controlLogicGates = 5 * cacheLines; 
+    uint32_t tagComparisonGates = (2 * cacheConfig.numberOfTagBits) * cacheLines;
+
+    totalGates = allBitsCacheStorageGates + tagComparisonGates + controlLogicGates;
+
+    if (!directMapped) {
+        uint32_t twoBitCounterGates = (2 * oneBitStorageGates) * cacheLines;
+        uint32_t comparatorForCounterGates = twoBitCounterGates * 2; // comparator = 2 gates
+        uint32_t updateLogicGates = twoBitCounterGates * 7; // 2-bit adder = HA (2) + VA (5) = 7 gates
+        uint32_t LRUGates = twoBitCounterGates + comparatorForCounterGates + updateLogicGates;
+        totalGates += LRUGates;
     }
 
     SC_THREAD(update);
     sensitive << clk.pos();
 }
 
-CACHE_MODULE::~CACHE_MODULE() {
-    delete cache;
-}
-
 void CACHE_MODULE::update() {
+    // Update primitiveGateCount based on calculated totalGates in constructor
     wait(SC_ZERO_TIME);
+    resultPrimitiveGateCount.write(totalGates);
+    wait(SC_ZERO_TIME);
+    resultTemp.primitiveGateCount = resultPrimitiveGateCount.read();
+
+    unsigned cacheLatencyTemp = cacheLatency;
+    unsigned memoryLatencyTemp = memoryLatency;
+    
     for (int i = 0; i < cycles; i++){
-        // Handle edge case when simulation cycles longer than number of requests
-        while (i >= numRequests) {
-            result_cycles.write(result_cycles.read() + 1);
-            result_primitive_gate_count.write(result_temp.primitiveGateCount);
-            wait(SC_ZERO_TIME);
-            result_temp.cycles = result_cycles.read();
-            wait();
+        // If not all requests could be processed within the given cycles, cycles should have the value SIZE_MAX
+        if (requestsExceedCycles.read()) {
+            resultCycles.write(SIZE_MAX - 1);
+            resultTemp.cycles = SIZE_MAX - 1;
         }
 
-        cout << "\nCycle: " << result_cycles + 1 << endl;
-
-        // Take cacheLatency into account before reading to/writing from cache
-        int temp_cache_latency = cacheLatency;        
-        while (cacheLatency-- > 1) { // TODO: change memoryLatency and cacheLatency accordingly
-            result_cycles.write(result_cycles.read() + 1);
+        // Wait for cacheLatency cycles to complete before accessing the cache, and reset once completed
+        if (cacheLatency > 0 && !waitForMemoryLatency.read()) {
+            cacheLatency--;
+            resultCycles.write(resultCycles.read() + 1);
+            waitForCacheLatency.write(1);
             wait(SC_ZERO_TIME);
             wait();
+            continue;
+        } else if (cacheLatency == 0) {
+            cacheLatency = cacheLatencyTemp;
+            waitForCacheLatency.write(0);
+            wait(SC_ZERO_TIME);
         }
-        cacheLatency = temp_cache_latency;
 
-        // Read to / write from cache and update result hits or misses
-        int temp_data_to_write;
-        int current_misses = result_misses;
+        // Besides cacheLatency, wait for memoryLatency as well before proceeding
+        uint32_t dataToWriteTemp;
+        size_t currentMisses = resultMisses;
         wait(SC_ZERO_TIME);
-        // cout << "request addr: " << request_addr << endl;
-        if (request_we) {
-            cache->write_to_cache(request_addr, cache_config, request_data, result_temp);
-            // cout << "request addr: " << request_addr << endl;
-            // cout << "write successful: " << request_data << endl;
-        } else {
-            temp_data_to_write = cache->read_from_cache(request_addr, cache_config, result_temp);
-            // cout << "read addr: " << request_addr << endl;
-        }
-        result_misses.write(result_temp.misses);
-        result_hits.write(result_temp.hits);
-        wait(SC_ZERO_TIME);
-        
-        // Take memoryLatency into account when there is cache miss
-        if (static_cast<int>(result_temp.misses) > current_misses) {
-            int temp_memory_latency = memoryLatency;
-            while (memoryLatency-- > 1) { // TODO: change memoryLatency and cacheLatency accordingly
-                result_cycles.write(result_cycles.read() + 1);
-                wait(SC_ZERO_TIME);
-                wait();
+        if (!waitForMemoryLatency.read()) {
+            if (requestWE) {
+                cache->write_to_cache(requestAddr, cacheConfig, requestData, resultTemp);
+            } else {
+                dataToWriteTemp = cache->read_from_cache(requestAddr, cacheConfig, resultTemp);
             }
-            memoryLatency = temp_memory_latency;
+            resultHits.write(resultTemp.hits);
+            resultMisses.write(resultTemp.misses);
+            wait(SC_ZERO_TIME);
+        }
+
+        // Detect cache miss
+        if (resultTemp.misses > currentMisses) {
+            waitForMemoryLatency.write(1);
+            wait(SC_ZERO_TIME);
+        }
+
+        // Reset memory latency once completed
+        if (memoryLatency > 0 && waitForMemoryLatency.read()) {
+            memoryLatency--;
+            resultCycles.write(resultCycles.read() + 1);
+            wait(SC_ZERO_TIME);
+            wait();
+            continue;
+        }
+        if (memoryLatency == 0) {
+            memoryLatency = memoryLatencyTemp;
+            waitForMemoryLatency.write(0);
+            wait(SC_ZERO_TIME);
         }
 
         // Data-to-read should only be ready after cacheLatency (+ memoryLatency)
-        if (!request_we) {
-            data = temp_data_to_write;
+        if (!requestWE && !waitForMemoryLatency.read()) {
+            data.write(dataToWriteTemp);
             wait(SC_ZERO_TIME);
         }
 
-        result_cycles.write(result_cycles.read() + 1);  
-        result_primitive_gate_count.write(result_temp.primitiveGateCount);
+        // Update signals in result
+        resultCycles.write(resultCycles.read() + 1);  
         wait(SC_ZERO_TIME);  
-        result_temp.cycles = result_cycles.read();
+        resultTemp.cycles = resultCycles.read();
         wait(); 
     }
 }

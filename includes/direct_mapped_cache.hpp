@@ -1,35 +1,34 @@
 #ifndef DIRECTMAPPEDCACHE_HPP
 #define DIRECTMAPPEDCACHE_HPP
 
-#include "cache_address.hpp"
-#include "main_memory.hpp"
-#include "cache_template.hpp"
-#include "cache_config.hpp"
-#include "structs.hpp"
 #include <cstdint>
 
+#include "address_structs.hpp"
+#include "io_structs.hpp"
+#include "cache_base.hpp"
+#include "main_memory.hpp"
 
-struct CacheEntry {
+struct CacheLine {
     uint32_t tag;
-    uint32_t* data;
-    bool is_data_first_time = true;
+    uint8_t* data;
+    bool isFirstTime = true;
 };
 
-class DirectMappedCache : public Cache {
+class DirectMappedCache : public CacheBase {
 private:
-    CacheEntry* cache_entry;
-    unsigned cache_lines;
+    CacheLine* cacheLine;
+    unsigned numOfCacheLines;
 
-    void replace(uint32_t address, CacheEntry &current_entry, int number_of_offset, CacheConfig cache_config);
+    void replace(uint32_t address, CacheLine &currentEntry, uint32_t numberOfOffsetBits, CacheConfig cacheConfig);
 
 public:
-    DirectMappedCache(unsigned cacheLines, CacheConfig cache_config);
+    DirectMappedCache(unsigned cacheLines, CacheConfig cacheConfig);
 
     ~DirectMappedCache();
 
-    int read_from_cache(uint32_t address, CacheConfig cache_config, Result &result) override;
+    uint32_t read_from_cache(uint32_t address, CacheConfig cacheConfig, Result &result) override;
 
-    void write_to_cache(uint32_t address, CacheConfig cache_config, int data_to_write, Result &result) override;
+    void write_to_cache(uint32_t address, CacheConfig cacheConfig, uint32_t dataToWrite, Result &result) override;
 };
 
 #endif

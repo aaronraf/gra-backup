@@ -1,148 +1,250 @@
 #include <systemc>
 #include <iostream>
-#include "../includes/structs.hpp"
+
+#include "../includes/io_structs.hpp"
 #include "../includes/cache_module.hpp"
+#define MATRIX_SIZE 4
 
 using namespace std;
 using namespace sc_core;
 
+uint32_t A[MATRIX_SIZE][MATRIX_SIZE] =
+    {
+        {3, 7, 4 ,12},
+        {6, 18, 8, 1},
+        {5, 23, 3 ,41},
+        {29, 17, 5, 1}
+    };
+
+uint32_t B[MATRIX_SIZE][MATRIX_SIZE] = 
+    {
+        {19, 13, 49, 22},
+        {4, 21, 37, 34},
+        {50, 0, 8, 14},
+        {26, 7, 13, 0}
+    };
+
+uint32_t C[MATRIX_SIZE][MATRIX_SIZE] = 
+    {
+        {597, 270, 594, 360},
+        {612, 463, 1037, 856},
+        {1403, 835, 1653, 934},
+        {895, 741, 2103, 1286}
+    };
+
+uint32_t addressA[MATRIX_SIZE][MATRIX_SIZE] =
+    {
+        {0x0, 0x4, 0x8, 0xC},
+        {0x10, 0x14, 0x18, 0x1C},
+        {0x20, 0x24, 0x28, 0x2C},
+        {0x30, 0x34, 0x38, 0x3C}
+    };
+
+uint32_t addressB[MATRIX_SIZE][MATRIX_SIZE] =
+    {
+        {0x74, 0x78, 0x7C, 0x80},
+        {0x84, 0x88, 0x8C, 0x90},
+        {0x94, 0x98, 0x9C, 0xA0},
+        {0xA4, 0xA8, 0xAC, 0xB0}
+    };
+
+uint32_t addressC[MATRIX_SIZE][MATRIX_SIZE] =
+    {
+        {0xC0, 0xC4, 0xC8, 0xCC},
+        {0xD0, 0xD4, 0xD8, 0xDC},
+        {0xE0, 0xE4, 0xE8, 0xEC},
+        {0xF0, 0xF4, 0xF8, 0xFC}
+    };
+
 int sc_main(int argc, char* argv[]) {
-    return 0;
+    std::cout << "ERROR" << std::endl;
+    return 1;
 }
 
-Result run_simulation(int cycles, bool direct_mapped,  unsigned cachelines, unsigned cacheline_size, 
-                        unsigned cache_latency, int memory_latency, size_t num_requests, Request requests[], const char* tf_filename) {
+Result run_simulation(int cycles, bool directMapped,  unsigned cacheLines, unsigned cacheLineSize, unsigned cacheLatency,
+                             int memoryLatency, size_t numRequests, Request requests[], const char* tracefile) {
 
     sc_clock clk("clk", 1, SC_SEC);
-    sc_signal<uint32_t> request_addr;
-    sc_signal<uint32_t> request_data;
-    sc_signal<int> request_we;
-    sc_signal<size_t> result_cycles;
-    sc_signal<size_t> result_hits;
-    sc_signal<size_t> result_misses;
-    sc_signal<size_t> result_primitive_gate_count; // would lead to overflow if use older system since the minsize of size_t is 16 bits
+    sc_signal<uint32_t> requestAddr;
+    sc_signal<uint32_t> requestData;
+    sc_signal<int> requestWE;
+    sc_signal<size_t> resultCycles;
+    sc_signal<size_t> resultHits;
+    sc_signal<size_t> resultMisses;
+    sc_signal<size_t> resultPrimitiveGateCount;
 
+    Result result;
 
-    // Tracefile initialization
-    sc_trace_file* tracefile;
-    bool tracefile_created = false;
-    if (strcmp(tf_filename, "") != 0) {
-        string tf_path = string("../out/") + string(tf_filename);
-        tracefile = sc_create_vcd_trace_file(tf_path.c_str());
-        tracefile_created = true;
+    // Ensure tracefile is initialized successfully
+    sc_trace_file* simulationTracefile;
+    bool simulationTracefileCreated = false;
+    if (strcmp(tracefile, "") != 0) {
+        string tracefilePath = string("../out/") + string(tracefile);
+        simulationTracefile = sc_create_vcd_trace_file(tracefilePath.c_str());
+        simulationTracefileCreated = true;
     }
 
-    if (tracefile_created) {
-        // Check if tracefile successfully initialized
-        if (tracefile == NULL) {
-            fprintf(stderr, "Tracefile not opened.\n");
+    if (simulationTracefileCreated) {
+        if (simulationTracefile == NULL) {
+            fprintf(stderr, "simulationTracefile not opened.\n");
             exit(EXIT_FAILURE);
         }
-        
-        sc_trace(tracefile, clk, "Clock");
-        sc_trace(tracefile, request_addr, " Request Address");
-        sc_trace(tracefile, request_data, "Request Data");
-        sc_trace(tracefile, request_we, "Request WE");
-        sc_trace(tracefile, cycles, "Result Cycles");
-        sc_trace(tracefile, result_misses, "Result Misses");
-        sc_trace(tracefile, result_hits, "Result Hits");
-        sc_trace(tracefile, result_primitive_gate_count, "Result Primitive Gate Count");
+        sc_trace(simulationTracefile, clk, "Clock");
+        sc_trace(simulationTracefile, requestAddr, "Request Address");
+        sc_trace(simulationTracefile, requestData, "Request Data");
+        sc_trace(simulationTracefile, requestWE, "Request WE");
+        sc_trace(simulationTracefile, resultCycles, "Result Cycles");
+        sc_trace(simulationTracefile, resultMisses, "Result Misses");
+        sc_trace(simulationTracefile, resultHits, "Result Hits");
+        sc_trace(simulationTracefile, resultPrimitiveGateCount, "Result Primitive Gate Count");
     }
 
-    CACHE_MODULE cache ("cache", cycles, direct_mapped, cachelines, cacheline_size, cache_latency, memory_latency, num_requests);
+    CACHE_MODULE cache ("cache", cycles, directMapped, cacheLines, cacheLineSize, cacheLatency, memoryLatency, numRequests);
     
     // Connnect ports to signals
     cache.clk(clk);
-    cache.request_addr(request_addr);
-    cache.request_we(request_we);
-    cache.request_data(request_data);
-    cache.result_cycles(result_cycles);
-    cache.result_hits(result_hits);
-    cache.result_misses(result_misses);
-    cache.result_primitive_gate_count(result_primitive_gate_count);
+    cache.requestAddr(requestAddr);
+    cache.requestWE(requestWE);
+    cache.requestData(requestData);
+    cache.resultCycles(resultCycles);
+    cache.resultHits(resultHits);
+    cache.resultMisses(resultMisses);
+    cache.resultPrimitiveGateCount(resultPrimitiveGateCount);
 
-    // Simulation: Matrix multiplication, only use for inputs.csv
-    int entry_matrix_a = 0, entry_matrix_b = 0, entry_matrix_c = 0;
-    bool read_matrix_a = true;
-    bool read_matrix_b = false;
-    bool read_matrix_c = false;
-    int temp_mul_res;
-    bool is_initialization_finished = false;
-    int full_adder_primitive_gate_count = 5;
-    int half_adder_primitive_gate_count = 2;
-    int number_of_bits = 32;
-    int additional_and_gates_in_multiplication = number_of_bits * number_of_bits;
-    for (int i = 0; i < cycles; i++) {
-    
-        if (i < static_cast<int>(num_requests)) {
-            request_addr = requests[i].addr;
-            request_we = requests[i].we;
-            request_data = requests[i].data;
+    // Simulation: Matrix multiplication, only use for matrix_multiplication.csv
+    uint32_t entryMatrixA = 0;
+    uint32_t entryMatrixB = 0;
+    uint32_t entryMatrixC = 0;
+    uint32_t mulResultTemp;
+
+    bool readMatrixA = true;
+    bool readMatrixB = false;
+    bool readMatrixC = false;
+    bool isInitializationFinished = false;
+
+    uint32_t a_j = 0;
+    uint32_t b_i = 0;
+    uint32_t c_i = 0;
+    uint32_t c_j = 0;
+    uint32_t c = 0;
+
+    size_t requestIndex = 0;
+
+    for (int cycleCount = 0; cycleCount < cycles; requestIndex++, cycleCount++) {
+        // If all request have been processed, exit the loop
+        if (requestIndex >= numRequests) {
+            break;
+        }
+        
+        // If request exceeds number of cycles, signal the module to set the resultCycles to SIZE_MAX
+        if (cycleCount == cycles - 1 && requestIndex < numRequests) {
+            cache.requestsExceedCycles.write(1);
         }
 
-        // cout << request_we << endl;
+        // Update request
+        requestAddr = requests[requestIndex].addr;
+        requestWE = requests[requestIndex].we;
+        requestData = requests[requestIndex].data;
         
+        // Run simulation for 1 cycle
         sc_start(1, SC_SEC);
+
+        // If still waiting for latency, keep using the same request
+        if (cache.waitForCacheLatency.read() || cache.waitForMemoryLatency.read()) {
+            requestIndex--;
+            continue;
+        }
         
-        if (i < static_cast<int>(num_requests)) {
-            if (requests[i].we) {
-                if (is_initialization_finished) {
-                    int result = entry_matrix_c + temp_mul_res;
-                    // this alone should be 10048 = (16 elemen in matrix C * 4 times zwischenaddition) * 157
-                    cache.result_temp.primitiveGateCount += (full_adder_primitive_gate_count * (number_of_bits - 1) + half_adder_primitive_gate_count); 
-                    if (static_cast<uint32_t>(result) != request_data) {
-                        cout << " Result: " << result << " is different from req data: " << request_data << endl;
-                    }
+        // Only conduct tests once finished initializing main memory with matrix_multiplication.csv
+        if (requests[requestIndex].we) {
+            if (isInitializationFinished) {  
+                // Calculate primitiveGateCount for addition  
+                uint32_t result = entryMatrixC + mulResultTemp;
+
+                if (c == MATRIX_SIZE - 1 && requestAddr != addressC[c_i][c_j]) {
+                    std::cerr << "Error in Matrix C: Wrote to the wrong address" << endl;
+                    std::cerr << "Expected: " << requestAddr << " but got: " << addressC[c_i][c_j] << endl;
                 }
-            } else {
-                is_initialization_finished = true;
-                if (read_matrix_a) {
-                    entry_matrix_a = cache.data.read();
-                    read_matrix_a = false;
-                    read_matrix_b = true;
-                } else if (read_matrix_b) {
-                    entry_matrix_b = cache.data.read();
-                    read_matrix_b = false;
-                    read_matrix_c = true;
-                } else if (read_matrix_c) {
-                    entry_matrix_c = cache.data.read();
-                    temp_mul_res = entry_matrix_a * entry_matrix_b;
-                    // n-bit multiplication: AND Gates = n^2 ; HA = n ; FA = n(n-2)
-                    // number of FA:
-                    // 2-bit multiplier: 0
-                    // 3-bit multplier: 3
-                    // 4-bit multiplier: 8
-                    // 0, 3, 8, 15, ... -> quadratic sequence
-                    // a(2)^2 + b(2) + c = 0 <=> 4a + 2b + c = 0
-                    // a(3)^2 + b(3) + c = 3 <=> 9a + 3b + c = 3
-                    // a(4)^2 + b(4) + c = 8 <=> 16a + 4b + c = 8
-                    // a = 1 ; b = -2 ; c = 0 -> n^2 + 2n = n(n-2) for n>=2
-                    // with this formula alone, if we use 4-bit, then it will use 64 gates per multiplication
-                    // 1 entry in matrix use 4 multiplication, there are 16 entries so 16*4 = 64 multplication -> this alone should use 4096 gates
-                    // for 32 bit it should use 5888 per multiplication so 376832 in total + addition (10048) = 386880
-                    cache.result_temp.primitiveGateCount += additional_and_gates_in_multiplication +
-                                                            (number_of_bits * half_adder_primitive_gate_count) +
-                                                            (number_of_bits * (number_of_bits - 2) * full_adder_primitive_gate_count);
-                    read_matrix_c = false;
-                    read_matrix_a = true;
+                if (c++ == MATRIX_SIZE - 1 && result != C[c_i][c_j]) {
+                    std::cerr << "Error in Matrix C: Something went wrong while storing data" << endl;
+                    std::cerr << "Expected: " << result << " but got: " << C[c_i][c_j] << endl;
                 }
-                // cout << "data to read: " << cache.data.read() << endl;
+
+                if (c == MATRIX_SIZE) {
+                    c_j++;
+                    c = 0;
+                }
+                if (c_j == MATRIX_SIZE) {
+                    c_j = 0;
+                    c_i++;
+                }
+            }
+        } else {
+            isInitializationFinished = true;
+
+            // Read from Matrix A
+            if (readMatrixA) {
+                entryMatrixA = cache.data.read();
+                
+                if (requestAddr != addressA[c_i][a_j]) {
+                    std::cerr << "Error in Matrix A: Wrote to the wrong address" << endl;
+                    std::cerr << "Expected: " << requestAddr << " but got: " << addressA[c_i][a_j] << endl;
+                }
+                if (entryMatrixA != A[c_i][a_j++]) {
+                    std::cerr << "Error in Matrix A: Something went wrong while storing data" << endl;
+                    std::cerr << "Expected: " << entryMatrixA << " but got: " << A[c_i][a_j - 1] << endl;
+                }
+
+                if (a_j == MATRIX_SIZE) {
+                    a_j = 0;
+                }
+                readMatrixA = false;
+                readMatrixB = true;
+            }
+            
+            // Read from Matrix B
+            else if (readMatrixB) {
+                entryMatrixB = cache.data.read();  
+                
+                if (requestAddr != addressB[b_i][c_j]) {
+                    std::cerr << "Error in Matrix B: Wrote to the wrong address" << endl;
+                    std::cerr << "Expected: " << requestAddr << " but got: " << addressB[b_i][c_j] << endl;                    
+                }
+                if (entryMatrixB != B[b_i++][c_j]) {
+                    std::cerr << "Error in Matrix B: Something went wrong while storing data" << endl;
+                    std::cerr << "Expected: " << entryMatrixB << " but got: " << B[b_i - 1][c_j] << endl;                    
+                }
+
+
+                if (b_i == MATRIX_SIZE) {
+                    b_i = 0;
+                }
+                
+                readMatrixB = false;
+                readMatrixC = true;
+            } 
+            
+            // Read intermediate values from matrix C
+            else if (readMatrixC) {
+                entryMatrixC = cache.data.read();
+
+                // Calculate primitiveGateCount for multiplication
+                mulResultTemp = entryMatrixA * entryMatrixB;
+                readMatrixC = false;
+                readMatrixA = true;
             }
         }
     }
 
+    // Update result
+    result = cache.resultTemp;
 
-    
-
-    cout << "\nFinal result cycles: " << cache.result_cycles << endl;
-
-    // Close and delete resources
-    if (tracefile_created) {
-        sc_close_vcd_trace_file(tracefile);
+    // Close and free resources
+    if (simulationTracefileCreated) {
+        sc_close_vcd_trace_file(simulationTracefile);
     }
-    delete main_memory;
+    delete mainMemory;
+    delete cache.cache;
 
-    return cache.result_temp;
+    return result;
 }
-
- // g++ -std=c++14 -I../../systemc/include -L../../systemc/lib -Wl,-rpath,../../systemc/lib -o cache_module direct_mapped_cache.cpp four_way_lru_cache.cpp lru_cache.cpp main_memory.cpp simulation.cpp -lsystemc

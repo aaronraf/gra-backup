@@ -1,66 +1,63 @@
 #ifndef FOURWAYLRUCACHE_HPP
 #define FOURWAYLRUCACHE_HPP
 
-#include "cache_address.hpp"
-#include "cache_template.hpp"
-#include "main_memory.hpp"
-#include "cache_config.hpp"
 #include <unordered_map>
-#include "structs.hpp"
-#include <vector>
 #include <cstdint>
+#include <vector>
+
+#include "address_structs.hpp"
+#include "io_structs.hpp"
+#include "cache_base.hpp"
+#include "main_memory.hpp"
+
 using namespace std;
 
 class LRUCache {
 private:
     class Node {
     public:
-        // TODO: sc_bv<8> data[number_of_offset];
-        int data[10000];
-        uint32_t map_key; // key of map which is tag
-        bool is_first_time;
+        uint8_t* data;
+        uint32_t tagAsMapKey;
+        bool isFirstTime;
+        
         Node* next;
         Node* prev;
 
-        Node(int number_of_offset); // constructor: initialize all data to 0 and is_first_time to true
+        Node(uint32_t numberOfOffsetBits);
+        ~Node();
     };
 
-    // TODO: unordered_map<sc_bv<8>, Node*> map;
-    unordered_map<uint32_t, Node*> map; // int = tag
+    unordered_map<uint32_t, Node*> map;
     Node* head; // head = MRU
     Node* tail; // tail = LRU
     
-    void push_to_head(Node* node); // move LRU to MRU
-    void add(Node* node);
-    void remove(Node* node);
+    void update_to_mru(Node* node);
+    void add_node(Node* node);
+    void remove_node(Node* node);
         
 public:
-    // doubly linkedlist: head - 4 nodes - tail with O(1) replace
-    // map: {key 1: node 1 ; key 2: node 2; key 3: node 3 ; key 4: node 4} with O(1) read/write
-
-    LRUCache(CacheConfig cache_config); // constructor: initialize linkedlist and map
+    LRUCache(CacheConfig cacheConfig);
     
-    ~LRUCache(); // destructor: ensure delete all nodes to avoid memory leaks
+    ~LRUCache();
 
-    // TODO: sc_bv<8> read(sc_bv<number_of_tag> tag, sc_bv<number_of_offset> offset)
-    int read_from_cache(uint32_t address, CacheAddress cache_address, CacheConfig cache_config, Result &result);
+    uint32_t read_from_cache(uint32_t address, CacheAddress cacheAddress, CacheConfig cacheConfig, Result &result);
 
-    // TODO : void write(sc_bv<number_of_tag> tag, sc_bv<number_of_offset> offset, sc_bv<8> data)
-    void write_to_cache(uint32_t address, CacheAddress cache_address, CacheConfig cache_config, int data_to_write, Result &result);
+    void write_to_cache(uint32_t address, CacheAddress cacheAddress, CacheConfig cacheConfig, uint32_t dataToWrite, Result &result);
 
-    void replace_lru(uint32_t address, uint32_t cache_address_tag, CacheConfig cache_config);
+    void replace_lru(uint32_t address, uint32_t cacheAddressTag, CacheConfig cacheConfig);
 };
 
-class FourWayLRUCache : public Cache {
+class FourWayLRUCache : public CacheBase {
 private:
-    vector<LRUCache*> cache_sets;
+    vector<LRUCache*> cacheSets;
 
 public:
-    FourWayLRUCache(CacheConfig cache_config);
+    FourWayLRUCache(CacheConfig cacheConfig);
+
     ~FourWayLRUCache();
 
-    int read_from_cache(uint32_t address, CacheConfig cache_config, Result &result) override;
-    void write_to_cache(uint32_t address, CacheConfig cache_config, int data_to_write, Result &result) override;
+    uint32_t read_from_cache(uint32_t address, CacheConfig cacheConfig, Result &result) override;
+    void write_to_cache(uint32_t address, CacheConfig cacheConfig, uint32_t dataToWrite, Result &result) override;
 };
 
 #endif

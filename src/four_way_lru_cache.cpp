@@ -1,49 +1,53 @@
 #include <iostream>
 #include <unordered_map>
 #include <cmath>
-#include <algorithm> // std::fill()
+
 #include "../includes/four_way_lru_cache.hpp"
-#include "../includes/cache_config.hpp"
 #include "../includes/main_memory_global.hpp"
+
 using namespace std;
 
-LRUCache::Node::Node(int number_of_offset) : next(nullptr), prev(nullptr) {
-    fill(data, data + number_of_offset, 0); // initialize array to 0
-    is_first_time = true;
+LRUCache::Node::Node(uint32_t numberOfOffsetBits) : next(nullptr), prev(nullptr) {
+    data = new uint8_t[static_cast<uint32_t>(pow(2, numberOfOffsetBits))];
+    isFirstTime = true;
 }
 
-void LRUCache::push_to_head(Node* node) {
-    remove(node);
-    add(node);
+LRUCache::Node::~Node() {
+    delete[] data;
 }
 
-void LRUCache::add(Node* node) {
+void LRUCache::update_to_mru(Node* node) {
+    remove_node(node);
+    add_node(node);
+}
+
+void LRUCache::add_node(Node* node) {
     node->next = head->next;
     node->next->prev = node;
     node->prev = head;
     head->next = node;
 }
 
-void LRUCache::remove(Node* node) {
+void LRUCache::remove_node(Node* node) {
     Node* prev = node->prev;
     Node* next = node->next;
     prev->next = next;
     next->prev = prev;
 }
 
-LRUCache::LRUCache(CacheConfig cache_config) {
-    // add head and tail
-    head = new Node(cache_config.number_of_offset_bits);
-    tail = new Node(cache_config.number_of_offset_bits);
+LRUCache::LRUCache(CacheConfig cacheConfig) {
+    // Create dummy head and tail
+    head = new Node(cacheConfig.numberOfOffsetBits);
+    tail = new Node(cacheConfig.numberOfOffsetBits);
     head->next = tail;
     tail->prev = head;
 
-    // add 4 nodes and set each of these to become the value of map (key doesn't matter here since the node is_first_time is true)
-    for (int i = 0; i < cache_config.number_of_tag_bits; i++) {
-        Node* node = new Node(cache_config.number_of_offset_bits);
-        node->map_key = i; 
-        add(node);
-        map[i] = node; //equivalent to map.insert(make_pair(i, node));
+    // Add 4 nodes in between head and tail
+    for (int i = 0; i < cacheConfig.numberOfTagBits; i++) {
+        Node* node = new Node(cacheConfig.numberOfOffsetBits);
+        node->tagAsMapKey = i; 
+        add_node(node);
+        map[i] = node;
     }
 }
 
@@ -56,112 +60,123 @@ LRUCache::~LRUCache() {
     }
 }
 
-int LRUCache::read_from_cache(uint32_t address, CacheAddress cache_address, CacheConfig cache_config, Result &result) {
-    // cout << "tag: " << cache_address.tag << " index: " << cache_address.index << " offset: " << cache_address.offset << endl;
-    // if not found -> replace
+uint32_t LRUCache::read_from_cache(uint32_t address, CacheAddress cacheAddress, CacheConfig cacheConfig, Result &result) {
+    // Replace if the tag isn't in the map or if it's a cold miss, and update number of misses/hits
     bool found = true;
-    if (map.find(cache_address.tag) == map.end()) { // map.find() returns map.end() if not found
-        replace_lru(address, cache_address.tag, cache_config);
+    if (map.find(cacheAddress.tag) == map.end()) {
+        replace_lru(address, cacheAddress.tag, cacheConfig);
         result.misses++;
         found = false;
-    }
-    // if accidentally found during first iteration so is_first_time is true -> also replace
-    else if (map[cache_address.tag]->is_first_time) {
-        replace_lru(address, cache_address.tag, cache_config);
+    } else if (map[cacheAddress.tag]->isFirstTime) {
+        replace_lru(address, cacheAddress.tag, cacheConfig);
         result.misses++;
         found = false;
     }
     if (found) {
         result.hits++;
     }
-    // read from lru and update lru to mru
-    Node* node = map[cache_address.tag]; 
-    push_to_head(node);                         // replace O(1)
-    return node->data[cache_address.offset];    // read O(1)
+
+    // Merge 4 bytes of data from 4 consecutive offsets into a single 32-bit-unsigned integer
+    Node* node = map[cacheAddress.tag]; 
+    uint8_t data1 = node->data[cacheAddress.offset];
+    uint8_t data2 = node->data[cacheAddress.offset + 1];
+    uint8_t data3 = node->data[cacheAddress.offset + 2];
+    uint8_t data4 = node->data[cacheAddress.offset + 3];
+    uint32_t dataToRead = CacheBase::merge_data_to_uint32(data1, data2, data3, data4);
+
+    update_to_mru(node);
+
+    return dataToRead;
 }
 
-void LRUCache::write_to_cache(uint32_t address, CacheAddress cache_address, CacheConfig cache_config, int data_to_write, Result &result) {
-    // cout << "tag: " << cache_address.tag << " index: " << cache_address.index << " offset: " << cache_address.offset << endl;
-    
-    // if not found -> replace
+void LRUCache::write_to_cache(uint32_t address, CacheAddress cacheAddress, CacheConfig cacheConfig, uint32_t dataToWrite, Result &result) {
+    // Replace if the tag isn't in the map or if it's a cold miss, and update number of misses/hits
     bool found = true;
-    if (map.find(cache_address.tag) == map.end()) { // map.find() returns map.end() if not found
-        replace_lru(address, cache_address.tag, cache_config);
+    if (map.find(cacheAddress.tag) == map.end()) {
+        replace_lru(address, cacheAddress.tag, cacheConfig);
         result.misses++;
         found = false;
-    }
-    // if accidentally found during first iteration so is_first_time is true -> also replace
-    else if (map[cache_address.tag]->is_first_time) {
-        replace_lru(address, cache_address.tag, cache_config);
+    } else if (map[cacheAddress.tag]->isFirstTime) {
+        replace_lru(address, cacheAddress.tag, cacheConfig);
         result.misses++;
         found = false;
     }
     if (found) {
         result.hits++;
     }
-    // write to lru and ram and update lru to mru
-    Node* node = map[cache_address.tag];
-    node->data[cache_address.offset] = data_to_write;   // write O(1)
-    main_memory->write_to_ram(address, data_to_write);  // write-through: write directly to memory
-    push_to_head(node);                                 // replace O(1)
+
+    // Split a 32-bit-unsigned integer into 4 bytes of data with consecutive offsets according to little-endian
+    Node* node = map[cacheAddress.tag];
+
+    uint8_t byteOfData = static_cast<uint8_t>(dataToWrite & 0xFF);
+    node->data[cacheAddress.offset] = byteOfData;
+    mainMemory->write_to_ram(address, byteOfData);
+
+    byteOfData = static_cast<uint8_t>((dataToWrite >> 8) & 0xFF);
+    node->data[cacheAddress.offset + 1] = byteOfData;
+    mainMemory->write_to_ram(address + 1, byteOfData);
+
+    byteOfData = static_cast<uint8_t>((dataToWrite >> 16) & 0xFF);
+    node->data[cacheAddress.offset + 2] = byteOfData;
+    mainMemory->write_to_ram(address + 2, byteOfData);
+
+    byteOfData = static_cast<uint8_t>((dataToWrite >> 24) & 0xFF);
+    node->data[cacheAddress.offset + 3] = byteOfData;
+    mainMemory->write_to_ram(address + 3, byteOfData);
+
+    update_to_mru(node);
 }
 
-void LRUCache::replace_lru(uint32_t address, uint32_t cache_address_tag, CacheConfig cache_config) {
-    // replace lru node with new node at lru place (tail)
-    Node* lru_node = tail->prev;
-    Node* new_node = new Node(cache_config.number_of_offset_bits);
-    new_node->next = tail;
-    new_node->prev = lru_node->prev;
-    lru_node->prev->next = new_node;
-    tail->prev = new_node;
+void LRUCache::replace_lru(uint32_t address, uint32_t cacheAddressTag, CacheConfig cacheConfig) {
+    // Update the LRU node with a new node with the correct attributes
+    Node* LRUNode = tail->prev;
+    Node* newNode = new Node(cacheConfig.numberOfOffsetBits);
 
-    // update map_key and is_first_time
-    new_node->map_key = cache_address_tag;
-    new_node->is_first_time = false;
+    newNode->next = tail;
+    newNode->prev = LRUNode->prev;
+    LRUNode->prev->next = newNode;
+    tail->prev = newNode;
 
-    // delete entry of lrunode of map and add the new one
-    map.erase(lru_node->map_key);
-    map[cache_address_tag] = new_node;
+    newNode->tagAsMapKey = cacheAddressTag;
+    newNode->isFirstTime = false;
 
-    delete lru_node;
+    map.erase(LRUNode->tagAsMapKey);
+    map[cacheAddressTag] = newNode;
+    delete LRUNode;
 
-    // get appropriate 4 (number_of_offset) byte data from ram
-    // 1 -> 0 1 2 3    1 / 4 = 0   0 * 4 = 0     fetch 0 - 3
-    // 2 -> 0 1 2 3    2 / 4 = 0   0 * 4 = 0     fetch 0 - 3
-    // 5 -> 4 5 6 7    5 / 4 = 1   1 * 4 = 4     fetch 4 - 7
-    // 9 -> 8 9 10 11  9 / 4 = 2   2 * 4 = 8     fetch 8 - 11
-    int total_offset = (int) pow(2, cache_config.number_of_offset_bits);
-    uint32_t start_address_to_fetch = (address / total_offset) * total_offset;
-    uint32_t last_address_to_fetch = start_address_to_fetch + total_offset - 1;
+    // Fetch a block of data from the main memory
+    uint32_t totalOffset = static_cast<uint32_t>(pow(2, cacheConfig.numberOfOffsetBits));
+    uint32_t startAddressToFetch = (address / totalOffset) * totalOffset;
+    uint32_t lastAddressToFetch = startAddressToFetch + totalOffset - 1;
     
-    for (uint32_t ram_address = start_address_to_fetch, offset = 0; ram_address <= last_address_to_fetch; ram_address++, offset++) { // O(1)
-        new_node->data[offset] = main_memory->read_from_ram(ram_address);
+    for (uint32_t RAMAddress = startAddressToFetch, offset = 0; RAMAddress <= lastAddressToFetch; RAMAddress++, offset++) { // O(1)
+        newNode->data[offset] = mainMemory->read_from_ram(RAMAddress);
     }
 }
 
-
-FourWayLRUCache::FourWayLRUCache(CacheConfig cache_config) {
-    // instantiate objects as many as number of index
-    for (int i = 0; i < (int) pow(2, cache_config.number_of_index_bits); i++) {
-        cache_sets.push_back(new LRUCache(cache_config));
+FourWayLRUCache::FourWayLRUCache(CacheConfig cacheConfig) {
+    // Instantiate number of LRU Caches based index bits
+    for (uint32_t i = 0; i < static_cast<uint32_t>(pow(2, cacheConfig.numberOfIndexBits)); i++) {
+        cacheSets.push_back(new LRUCache(cacheConfig));
     }
 }
 
 FourWayLRUCache::~FourWayLRUCache() {
-    // delete all LRUCache instances
-    for (auto lru_cache : cache_sets) {
-        delete lru_cache;
+    for (auto LRUCache : cacheSets) {
+        delete LRUCache;
     }
 }
 
-int FourWayLRUCache::read_from_cache(uint32_t address, CacheConfig cache_config, Result &result) {
-    CacheAddress cache_address(address, cache_config);
-    uint32_t set_index = cache_address.index;
-    return cache_sets[set_index]->read_from_cache(address, cache_address, cache_config, result);
+uint32_t FourWayLRUCache::read_from_cache(uint32_t address, CacheConfig cacheConfig, Result &result) {
+    // Read from correct cache based on the calculated set
+    CacheAddress cacheAddress(address, cacheConfig);
+    uint32_t setIndex = cacheAddress.index;
+    return cacheSets[setIndex]->read_from_cache(address, cacheAddress, cacheConfig, result);
 }
 
-void FourWayLRUCache::write_to_cache(uint32_t address, CacheConfig cache_config, int data_to_write, Result &result) {
-    CacheAddress cache_address(address, cache_config);
-    uint32_t set_index = cache_address.index;
-    cache_sets[set_index]->write_to_cache(address, cache_address, cache_config, data_to_write, result);
+void FourWayLRUCache::write_to_cache(uint32_t address, CacheConfig cacheConfig, uint32_t dataToWrite, Result &result) {
+    // Write to the correct cache based on the calculated set
+    CacheAddress cacheAddress(address, cacheConfig);
+    uint32_t setIndex = cacheAddress.index;
+    cacheSets[setIndex]->write_to_cache(address, cacheAddress, cacheConfig, dataToWrite, result);
 }

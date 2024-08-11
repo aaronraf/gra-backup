@@ -3,6 +3,6 @@
 
 #include "main_memory.hpp"
 
-extern MainMemory* main_memory;
+extern MainMemory* mainMemory;
 
 #endif
